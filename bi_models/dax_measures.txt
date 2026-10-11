@@ -1,0 +1,277 @@
+================================================================================
+ENTERPRISE EXECUTIVE KPI & REVENUE ANALYTICS SUITE — POWER BI DAX MEASURE LIBRARY
+Author: Harsh Chandak (B.Tech Computer Engineering & Data Science)
+Focus: B2B SaaS RevOps, Star Schema Dimensional Modeling, Time Intelligence & Cohorts
+================================================================================
+
+--------------------------------------------------------------------------------
+SECTION 1: CORE REVENUE & TRANSACTION MEASURES
+--------------------------------------------------------------------------------
+
+[Gross Revenue]
+Gross Revenue = 
+SUM ( fact_transactions[gross_amount] )
+Description: Total billed transaction value prior to discounts, contractual concessions, or refunds.
+
+[Total Discounts]
+Total Discounts = 
+SUM ( fact_transactions[discount_amount] )
+Description: Cumulative promotional and negotiated contractual discounts applied.
+
+[Total Refunds]
+Total Refunds = 
+SUM ( fact_transactions[refund_amount] )
+Description: Settled credit refunds and chargebacks.
+
+[Net Revenue]
+Net Revenue = 
+[Gross Revenue] - [Total Discounts] - [Total Refunds]
+Description: Primary GAAP top-line revenue metric recognized after concessions.
+
+[Discount Rate %]
+Discount Rate % = 
+DIVIDE ( [Total Discounts], [Gross Revenue], 0 )
+Description: Percentage of gross billing surrendered to discounts.
+
+
+--------------------------------------------------------------------------------
+SECTION 2: SAAS REVENUE OPERATIONS (MRR / ARR WATERFALL)
+--------------------------------------------------------------------------------
+
+[Monthly Recurring Revenue (MRR)]
+Monthly Recurring Revenue (MRR) = 
+CALCULATE (
+    SUM ( fact_monthly_snapshots[active_mrr] ),
+    fact_monthly_snapshots[active_mrr] > 0
+)
+Description: Total active committed recurring subscription revenue recognized in the active filter context.
+
+[Annual Recurring Revenue (ARR)]
+Annual Recurring Revenue (ARR) = 
+[Monthly Recurring Revenue (MRR)] * 12
+Description: Annualized run-rate of active subscriptions.
+
+[New Business MRR]
+New Business MRR = 
+CALCULATE (
+    SUM ( fact_monthly_snapshots[active_mrr] ),
+    fact_monthly_snapshots[mrr_change_type] = "New"
+)
+Description: Incremental recurring revenue from newly acquired first-time customers.
+
+[Expansion MRR]
+Expansion MRR = 
+CALCULATE (
+    SUM ( fact_monthly_snapshots[expansion_amount] ),
+    fact_monthly_snapshots[mrr_change_type] = "Expansion"
+)
+Description: Organic growth from existing customers upgrading tiers or adding capacity.
+
+[Contraction MRR]
+Contraction MRR = 
+CALCULATE (
+    SUM ( fact_monthly_snapshots[contraction_amount] ),
+    fact_monthly_snapshots[mrr_change_type] = "Contraction"
+)
+Description: Lost recurring revenue from existing customers downgrading plans without churning.
+
+[Churned MRR]
+Churned MRR = 
+CALCULATE (
+    SUM ( fact_monthly_snapshots[churn_amount] ),
+    fact_monthly_snapshots[mrr_change_type] = "Churn"
+)
+Description: Lost recurring revenue from fully canceled accounts.
+
+[Net MRR Growth]
+Net MRR Growth = 
+[New Business MRR] + [Expansion MRR] - [Contraction MRR] - [Churned MRR]
+Description: Absolute month-over-month recurring revenue velocity.
+
+[SaaS Quick Ratio]
+SaaS Quick Ratio = 
+DIVIDE (
+    [New Business MRR] + [Expansion MRR],
+    [Contraction MRR] + [Churned MRR],
+    BLANK ()
+)
+Description: Growth efficiency ratio. A Quick Ratio > 4.0 indicates elite SaaS expansion resilience.
+
+
+--------------------------------------------------------------------------------
+SECTION 3: RETENTION & CHURN DYNAMICS (NRR / GRR)
+--------------------------------------------------------------------------------
+
+[Net Revenue Retention (NRR %)]
+Net Revenue Retention (NRR %) = 
+VAR CurrentCohortCustomers = 
+    CALCULATETABLE (
+        VALUES ( fact_monthly_snapshots[customer_id] ),
+        DATEADD ( dim_date[full_date], -12, MONTH ),
+        fact_monthly_snapshots[active_mrr] > 0
+    )
+VAR BaselineMRR = 
+    CALCULATE (
+        SUM ( fact_monthly_snapshots[active_mrr] ),
+        DATEADD ( dim_date[full_date], -12, MONTH ),
+        CurrentCohortCustomers
+    )
+VAR CurrentMRR = 
+    CALCULATE (
+        SUM ( fact_monthly_snapshots[active_mrr] ),
+        CurrentCohortCustomers
+    )
+RETURN
+DIVIDE ( CurrentMRR, BaselineMRR, BLANK () )
+Description: 12-month trailing cohort expansion efficiency including upgrades, downgrades, and churn.
+
+[Gross Revenue Retention (GRR %)]
+Gross Revenue Retention (GRR %) = 
+VAR CurrentCohortCustomers = 
+    CALCULATETABLE (
+        VALUES ( fact_monthly_snapshots[customer_id] ),
+        DATEADD ( dim_date[full_date], -12, MONTH ),
+        fact_monthly_snapshots[active_mrr] > 0
+    )
+VAR BaselineMRR = 
+    CALCULATE (
+        SUM ( fact_monthly_snapshots[active_mrr] ),
+        DATEADD ( dim_date[full_date], -12, MONTH ),
+        CurrentCohortCustomers
+    )
+VAR CurrentMRRNoExpansion = 
+    SUMX (
+        CurrentCohortCustomers,
+        VAR BaseCustMRR = CALCULATE ( SUM ( fact_monthly_snapshots[active_mrr] ), DATEADD ( dim_date[full_date], -12, MONTH ) )
+        VAR CurrCustMRR = CALCULATE ( SUM ( fact_monthly_snapshots[active_mrr] ) )
+        RETURN MIN ( BaseCustMRR, CurrCustMRR )
+    )
+RETURN
+DIVIDE ( CurrentMRRNoExpansion, BaselineMRR, BLANK () )
+Description: Trailing retention excluding any expansion, capped at 100%. Demonstrates base stability.
+
+[Logo Churn Rate %]
+Logo Churn Rate % = 
+VAR ChurnedLogos = 
+    CALCULATE (
+        COUNTROWS ( fact_monthly_snapshots ),
+        fact_monthly_snapshots[mrr_change_type] = "Churn"
+    )
+VAR StartingLogos = 
+    CALCULATE (
+        DISTINCTCOUNT ( fact_monthly_snapshots[customer_id] ),
+        PREVIOUSMONTH ( dim_date[full_date] ),
+        fact_monthly_snapshots[active_mrr] > 0
+    )
+RETURN
+DIVIDE ( ChurnedLogos, StartingLogos, 0 )
+Description: Percentage of customer accounts lost during the period.
+
+
+--------------------------------------------------------------------------------
+SECTION 4: CUSTOMER LIFETIME VALUE & CAC EFFICIENCY
+--------------------------------------------------------------------------------
+
+[Active Customer Count]
+Active Customer Count = 
+CALCULATE (
+    DISTINCTCOUNT ( fact_monthly_snapshots[customer_id] ),
+    fact_monthly_snapshots[active_mrr] > 0
+)
+Description: Number of unique active paying customer accounts.
+
+[Average Revenue Per User (ARPU)]
+Average Revenue Per User (ARPU) = 
+DIVIDE ( [Monthly Recurring Revenue (MRR)], [Active Customer Count], 0 )
+Description: Monthly contract value per active customer account.
+
+[Customer Acquisition Cost (Blended CAC)]
+Customer Acquisition Cost (Blended CAC) = 
+AVERAGE ( dim_customer[cac] )
+Description: Average dollar cost expended to acquire a paying customer.
+
+[CAC Payback Period (Months)]
+CAC Payback Period (Months) = 
+VAR MonthlyGrossMarginPerCustomer = [ARPU] * 0.825
+RETURN
+DIVIDE ( [Customer Acquisition Cost (Blended CAC)], MonthlyGrossMarginPerCustomer, BLANK () )
+Description: Time in months required for a customer to repay acquisition capital at 82.5% Gross Margin.
+
+[Customer Lifetime Value (LTV)]
+Customer Lifetime Value (LTV) = 
+VAR MonthlyMarginDollars = [ARPU] * 0.825
+VAR MonthlyChurnProb = MAX ( [Logo Churn Rate %], 0.015 )
+RETURN
+DIVIDE ( MonthlyMarginDollars, MonthlyChurnProb, BLANK () )
+Description: Expected total gross profit generated per customer across entire relationship.
+
+[LTV to CAC Ratio]
+LTV to CAC Ratio = 
+DIVIDE ( [Customer Lifetime Value (LTV)], [Customer Acquisition Cost (Blended CAC)], BLANK () )
+Description: Return on sales and marketing investment. Benchmark > 3.0x.
+
+
+--------------------------------------------------------------------------------
+SECTION 5: TIME INTELLIGENCE & ROLLING WINDOW CALCULATIONS
+--------------------------------------------------------------------------------
+
+[Revenue MTD]
+Revenue MTD = 
+TOTALMTD ( [Net Revenue], dim_date[full_date] )
+Description: Month-to-date cumulative net recognized revenue.
+
+[Revenue QTD]
+Revenue QTD = 
+TOTALQTD ( [Net Revenue], dim_date[full_date] )
+Description: Quarter-to-date cumulative net recognized revenue.
+
+[Revenue YTD]
+Revenue YTD = 
+TOTALYTD ( [Net Revenue], dim_date[full_date] )
+Description: Calendar year-to-date cumulative net revenue.
+
+[Revenue Same Period Last Year]
+Revenue Same Period Last Year = 
+CALCULATE (
+    [Net Revenue],
+    SAMEPERIODLASTYEAR ( dim_date[full_date] )
+)
+Description: Revenue recognized in identical period exactly 12 months prior.
+
+[Revenue YoY Growth %]
+Revenue YoY Growth % = 
+VAR PrevRev = [Revenue Same Period Last Year]
+RETURN
+DIVIDE ( [Net Revenue] - PrevRev, PrevRev, BLANK () )
+Description: Percentage year-over-year revenue expansion rate.
+
+[Rolling 30-Day Revenue]
+Rolling 30-Day Revenue = 
+CALCULATE (
+    [Net Revenue],
+    DATESINPERIOD ( dim_date[full_date], MAX ( dim_date[full_date] ), -30, DAY )
+)
+Description: 30-day moving window sum smoothing day-of-week and billing cycle fluctuations.
+
+
+--------------------------------------------------------------------------------
+SECTION 6: ADVANCED CONCENTRATION & PARETO ANALYSIS
+--------------------------------------------------------------------------------
+
+[Pareto Cumulative Revenue %]
+Pareto Cumulative Revenue % = 
+VAR CurrentCustomerRev = [Net Revenue]
+VAR AllCustomersRevenue = 
+    CALCULATE ( [Net Revenue], ALL ( dim_customer ) )
+VAR BetterCustomersRevenue = 
+    CALCULATE (
+        [Net Revenue],
+        FILTER (
+            ALL ( dim_customer ),
+            [Net Revenue] >= CurrentCustomerRev
+        )
+    )
+RETURN
+DIVIDE ( BetterCustomersRevenue, AllCustomersRevenue, BLANK () )
+Description: Cumulative revenue concentration proportion used to construct dynamic 80/20 Pareto curves.
+================================================================================
